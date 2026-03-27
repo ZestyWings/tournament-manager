@@ -51,7 +51,7 @@ input::placeholder{color:#334155}
 .team-list{display:flex;flex-direction:column;gap:7px;margin-top:8px}
 .team-item{display:flex;align-items:center;gap:10px;background:#0d1b2a;border:1px solid #1e3348;border-radius:7px;padding:10px 14px}
 .team-num{width:26px;height:26px;border-radius:50%;background:#f59e0b;color:#0d1b2a;font-weight:800;font-size:0.78rem;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.team-name-cell{flex:1;font-weight:600;font-size:0.9rem}
+.team-name-cell{flex:1;font-weight:600;font-size:0.9rem;min-width:0;word-break:break-word}
 .pool-chip{font-size:0.72rem;background:#0d1b2a;border:1px solid #f59e0b;color:#f59e0b;border-radius:4px;padding:2px 8px;font-weight:700}
 
 /* ── Pool buckets ── */
@@ -61,7 +61,7 @@ input::placeholder{color:#334155}
 .bucket-team{background:#132237;border:1px solid #1e3348;border-radius:5px;padding:8px 12px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;font-size:0.83rem;font-weight:500}
 .unassigned-section{margin-bottom:16px}
 .unassigned-section>label{display:block;margin-bottom:8px}
-.pool-select{background:#0d1b2a;border:1px solid #1e3348;border-radius:5px;color:#94a3b8;font-size:0.78rem;padding:3px 8px;cursor:pointer;font-family:inherit}
+.pool-select{background:#0d1b2a;border:1px solid #1e3348;border-radius:5px;color:#94a3b8;font-size:0.78rem;padding:3px 8px;cursor:pointer;font-family:inherit;width:150px;flex-shrink:0}
 .pool-select:focus{outline:none;border-color:#f59e0b}
 
 /* ── Phase banner ── */
@@ -229,6 +229,7 @@ input::placeholder{color:#334155}
 ::-webkit-scrollbar-thumb{background:#1e3348;border-radius:3px}
 
 hr.div{border:none;border-top:1px solid #1e3348;margin:16px 0}
+@media(max-width:480px){.header-right .btn,.header-right label.btn{padding:6px 8px;font-size:0.7rem}}
 
 /* ── Schedule list ── */
 .sched-list{display:flex;flex-direction:column;gap:3px}
@@ -247,6 +248,12 @@ hr.div{border:none;border-top:1px solid #1e3348;margin:16px 0}
 .vs-lbl{color:#334155;font-size:0.75rem;text-align:center}
 .status-dot{width:8px;height:8px;border-radius:50%;justify-self:center}
 .dot-done{background:#10b981}.dot-pending{background:#1e3348}
+
+/* ── Add Game ── */
+.add-game-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 10px;background:#0a1520;border:1px dashed #1e3348;border-radius:7px;margin-top:6px}
+.add-game-row select{background:#0d1b2a;border:1px solid #1e3348;border-radius:5px;color:#e2e8f0;font-size:0.82rem;padding:6px 8px;flex:1;min-width:120px;font-family:inherit}
+.add-game-row select:focus{outline:none;border-color:#f59e0b}
+.add-game-row .vs-lbl{flex-shrink:0}
 
 /* ── Pool Summary ── */
 .summary-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;margin-top:20px}
@@ -271,6 +278,11 @@ hr.div{border:none;border-top:1px solid #1e3348;margin:16px 0}
     <div class="header-sub" id="hSub">Set up your tournament below</div>
   </div>
   <div class="header-right">
+    <span id="saveIndicator" style="font-size:0.72rem;color:#4a6380;transition:color .3s"></span>
+    <button class="btn btn-ghost btn-sm" onclick="exportData()" title="Download tournament as a save file">💾 Save File</button>
+    <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0" title="Load a previously saved tournament file">
+      📂 Load File<input type="file" accept=".json" style="display:none" onchange="importData(event)">
+    </label>
     <button class="btn btn-ghost btn-sm" onclick="resetTournament()">↺ Reset</button>
   </div>
 </div>
@@ -360,6 +372,7 @@ hr.div{border:none;border-top:1px solid #1e3348;margin:16px 0}
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <button class="btn btn-secondary btn-sm" onclick="fillRandomScores()" title="Fill all unscored games with random scores">🎲 Simulate Scores</button>
+      <button class="btn btn-secondary btn-sm" onclick="printAllSchedules()">🖨 Print All Pools</button>
       <button class="btn btn-success" id="advanceBtn" style="display:none" onclick="goToPlayoffs()">Advance to Playoffs →</button>
     </div>
   </div>
@@ -396,12 +409,38 @@ let _tid = 0, _gid = 0, _mockIdx = 0;
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // PERSISTENCE
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Each browser tab gets its own session key so multiple tournaments
+// can run simultaneously in separate tabs without interfering.
+function getTabKey() {
+  let key = sessionStorage.getItem('tm_tab_key');
+  if (!key) {
+    key = 'tm_v2_' + Math.random().toString(36).slice(2, 10);
+    sessionStorage.setItem('tm_tab_key', key);
+  }
+  return key;
+}
+
 function save() {
-  try { localStorage.setItem('tm_v2', JSON.stringify({T,_tid,_gid,_mockIdx})); } catch(e){}
+  try {
+    localStorage.setItem(getTabKey(), JSON.stringify({T,_tid,_gid,_mockIdx}));
+    flashSaved();
+  } catch(e){}
+}
+
+let _flashTimer = null;
+function flashSaved() {
+  const el = document.getElementById('saveIndicator');
+  if (!el) return;
+  const now = new Date();
+  const t = now.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+  el.textContent = `✓ Saved ${t}`;
+  el.style.color = '#10b981';
+  clearTimeout(_flashTimer);
+  _flashTimer = setTimeout(()=>{ el.style.color = '#4a6380'; }, 3000);
 }
 function load() {
   try {
-    const d = localStorage.getItem('tm_v2');
+    const d = localStorage.getItem(getTabKey());
     if (!d) return false;
     const obj = JSON.parse(d);
     T = obj.T; _tid = obj._tid||0; _gid = obj._gid||0; _mockIdx = obj._mockIdx||0;
@@ -664,7 +703,10 @@ function renderPoolContent() {
       </div>
       <div>
         <div class="card">
-          <div class="card-title">📅 Schedule — Pool ${pool.id}</div>
+          <div class="card-title" style="justify-content:space-between">
+            <span>📅 Schedule — Pool ${pool.id}</span>
+            <button class="btn btn-secondary btn-sm" onclick="printPoolSchedule('${pool.id}')" title="Print this pool's schedule">🖨 Print Pool ${pool.id}</button>
+          </div>
           ${renderSchedule(pool)}
         </div>
       </div>
@@ -764,6 +806,15 @@ function renderSchedule(pool) {
       ${isActive ? '<span class="active-pip" title="Up next"></span>' : `<span class="status-dot ${done?'dot-done':'dot-pending'}"></span>`}
     </div>`;
   });
+
+  // Add Game row
+  const teamOptions = pool.teams.map(tid=>`<option value="${tid}">${esc(dn(getTeam(tid)))}</option>`).join('');
+  html += `<div class="add-game-row">
+    <select id="ag-I-${pool.id}"><option value="">Team I…</option>${teamOptions}</select>
+    <span class="vs-lbl">vs</span>
+    <select id="ag-II-${pool.id}"><option value="">Team II…</option>${teamOptions}</select>
+    <button class="btn btn-secondary btn-sm" onclick="addGame('${pool.id}')">+ Add Game</button>
+  </div>`;
 
   html += '</div>';
   return html;
@@ -871,6 +922,17 @@ function dragLeave(e) {
   }
 }
 
+function addGame(poolId) {
+  const pool = T.pools.find(p=>p.id===poolId);
+  const teamI = document.getElementById(`ag-I-${poolId}`)?.value;
+  const teamII = document.getElementById(`ag-II-${poolId}`)?.value;
+  if (!teamI || !teamII) return alert('Please select both teams.');
+  if (teamI === teamII) return alert('Teams must be different.');
+  const lastRound = pool.games[pool.games.length-1]?.round || 1;
+  pool.games.push({id:'g'+(++_gid), teamI, teamII, scoreI:null, scoreII:null, round:lastRound});
+  save(); renderPoolPlay();
+}
+
 function moveGame(poolId, idx, dir) {
   const pool = T.pools.find(p=>p.id===poolId);
   const newIdx = idx + dir;
@@ -889,6 +951,133 @@ function dragDrop(e, poolId, dropIdx) {
   pool.games.splice(dropIdx, 0, moved);
   _dragSrcIdx = null; _dragSrcPool = null;
   save(); renderPoolPlay();
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// PRINT SCHEDULES
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function printPoolSchedule(poolId) {
+  const pool = T.pools.find(p=>p.id===poolId);
+  if (!pool) return;
+  openPrintWindow([pool]);
+}
+
+function printAllSchedules() {
+  openPrintWindow(T.pools);
+}
+
+function openPrintWindow(pools) {
+  const dateStr = T.date
+    ? new Date(T.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})
+    : '';
+  const subtitle = [T.org, dateStr].filter(Boolean).join(' · ');
+
+  let body = '';
+  pools.forEach((pool, pi) => {
+    body += `
+      <div class="pool-block">
+        <div class="sheet-header">
+          <div>
+            <div class="sheet-title">${esc(T.name)}</div>
+            ${subtitle ? `<div class="sheet-sub">${esc(subtitle)}</div>` : ''}
+          </div>
+          <div class="pool-label">Pool ${pool.id}</div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th class="col-num">#</th>
+              <th>Team I</th>
+              <th class="col-score">Score</th>
+              <th>Team II</th>
+              <th class="col-ref">Referee / Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${pool.games.slice(0,15).map((g, idx) => `
+              <tr>
+                <td class="col-num">${idx+1}</td>
+                <td class="team-cell">${esc(dn(getTeam(g.teamI)))}</td>
+                <td class="col-score">
+                  <div class="score-row">
+                    <div class="score-box"></div>
+                    <span class="score-dash">—</span>
+                    <div class="score-box"></div>
+                  </div>
+                </td>
+                <td class="team-cell">${esc(dn(getTeam(g.teamII)))}</td>
+                <td class="col-ref"></td>
+              </tr>`).join('')}
+            ${Array.from({length: Math.max(0, 15 - pool.games.length)}, (_,i) => `
+              <tr class="blank-row">
+                <td class="col-num" style="color:#bbb">${pool.games.length+i+1}</td>
+                <td class="team-cell"></td>
+                <td class="col-score">
+                  <div class="score-row">
+                    <div class="score-box"></div>
+                    <span class="score-dash">—</span>
+                    <div class="score-box"></div>
+                  </div>
+                </td>
+                <td class="team-cell"></td>
+                <td class="col-ref"></td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+        <div class="sheet-footer">
+          <span>Staff: _______________________________</span>
+          <span>Court: ____________</span>
+          <span>Start Time: ____________</span>
+        </div>
+      </div>
+      ${pi < pools.length-1 ? '<div class="page-break"></div>' : ''}`;
+  });
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>${esc(T.name)} — Schedule</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:Arial,Helvetica,sans-serif;color:#000;background:#fff;padding:24px;font-size:13px}
+  .pool-block{margin-bottom:32px}
+  .page-break{page-break-after:always;break-after:always}
+  .sheet-header{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #000;padding-bottom:10px;margin-bottom:14px}
+  .sheet-title{font-size:1.35rem;font-weight:800;letter-spacing:-0.01em}
+  .sheet-sub{font-size:0.8rem;color:#444;margin-top:3px}
+  .pool-label{font-size:2rem;font-weight:900;color:#000;line-height:1}
+  table{width:100%;border-collapse:collapse;margin-bottom:12px}
+  thead tr{background:#f0f0f0}
+  th{border:1px solid #888;padding:7px 10px;text-align:left;font-size:0.75rem;text-transform:uppercase;letter-spacing:.05em;font-weight:700}
+  td{border:1px solid #bbb;padding:10px 10px;vertical-align:middle}
+  tr:nth-child(even) td{background:#fafafa}
+  .col-num{width:36px;text-align:center;color:#555;font-weight:700}
+  .team-cell{font-weight:600;font-size:0.92rem}
+  .col-score{width:130px;text-align:center}
+  .col-ref{width:180px}
+  .score-row{display:flex;align-items:center;justify-content:center;gap:8px}
+  .score-box{width:44px;height:34px;border:2px solid #333;border-radius:3px;background:#fff}
+  .score-dash{font-weight:700;font-size:1rem;color:#555}
+  .blank-row td{background:#fff !important}
+  .blank-row .score-box{border-color:#ccc}
+  .sheet-footer{display:flex;gap:32px;font-size:0.8rem;color:#444;padding-top:8px;border-top:1px solid #ccc}
+  @media print{
+    body{padding:12px}
+    .pool-block{margin-bottom:0}
+    .page-break{page-break-after:always;break-after:page;height:0;margin:0}
+    tr{page-break-inside:avoid}
+  }
+<\/style>
+<\/head>
+<body>${body}<\/body>
+<\/html>`;
+
+  const win = window.open('', '_blank', 'width=900,height=700');
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  win.print();
 }
 
 function fillRandomScores() {
@@ -927,17 +1116,33 @@ function onBracketSizeChange() {
 function getSeededTeams() {
   const maxRank = Math.max(...T.pools.map(p=>p.teams.length));
   const seeds = [];
+
   for (let rank=0;rank<maxRank;rank++) {
+    // Collect all teams finishing at this rank across every pool
+    const tier = [];
     T.pools.forEach(pool=>{
       const st = calcStandings(pool);
-      if (st[rank]) seeds.push({
-        id: st[rank].id,
-        name: dn(getTeam(st[rank].id)),
-        seed: seeds.length+1,
+      if (!st[rank]) return;
+      const s = st[rank];
+      tier.push({
+        id: s.id,
+        name: dn(getTeam(s.id)),
         poolRank: rank+1,
-        pool: pool.id
+        pool: pool.id,
+        // stats for tiebreaking
+        w: s.w, diff: s.diff, pf: s.pf
       });
     });
+
+    // Sort within tier: most wins → best point diff → most points scored → pool letter
+    tier.sort((a,b)=>
+      b.w    !== a.w    ? b.w    - a.w    :
+      b.diff !== a.diff ? b.diff - a.diff :
+      b.pf   !== a.pf   ? b.pf   - a.pf   :
+      a.pool.localeCompare(b.pool)          // Pool A beats Pool B on identical stats
+    );
+
+    tier.forEach(t=> seeds.push({ ...t, seed: seeds.length+1 }));
   }
   // Trim to bracket size if set
   const limit = T.bracketSize && T.bracketSize !== 'auto' ? +T.bracketSize : seeds.length;
@@ -1233,9 +1438,47 @@ function clearForward(rounds, ri, mi) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// EXPORT / IMPORT
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function exportData() {
+  const payload = JSON.stringify({T, _tid, _gid, _mockIdx}, null, 2);
+  const blob = new Blob([payload], {type: 'application/json'});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  const date = T.date || new Date().toISOString().slice(0,10);
+  const name = (T.name || 'tournament').replace(/[^a-z0-9]/gi,'_').toLowerCase();
+  a.href     = url;
+  a.download = `${name}_${date}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importData(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  // Reset the input so the same file can be re-loaded if needed
+  e.target.value = '';
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const obj = JSON.parse(ev.target.result);
+      if (!obj.T || !obj.T.teams) throw new Error('Invalid save file');
+      T = obj.T; _tid = obj._tid||0; _gid = obj._gid||0; _mockIdx = obj._mockIdx||0;
+      // Store under this tab's key and reload the UI
+      save();
+      location.reload();
+    } catch(err) {
+      alert('Could not load file — make sure you selected a valid Tournament Manager save file.');
+    }
+  };
+  reader.readAsText(file);
+}
+
 function resetTournament() {
   if (!confirm('Reset all tournament data? This cannot be undone.')) return;
-  localStorage.removeItem('tm_v2');
+  localStorage.removeItem(getTabKey());
+  sessionStorage.removeItem('tm_tab_key');
   location.reload();
 }
 
@@ -1265,8 +1508,14 @@ function init() {
       switchTab('pools');
     }
   } else {
-    document.getElementById('tDate').value = new Date().toISOString().slice(0,10);
+    // Fresh load or still in setup phase — restore whatever was in progress
+    document.getElementById('tName').value = T.name||'';
+    document.getElementById('tDate').value = T.date || new Date().toISOString().slice(0,10);
+    document.getElementById('tOrg').value  = T.org||'';
+    if (T.pools.length) document.getElementById('numPools').value = T.pools.length;
+    if (T.bracketSize) document.getElementById('bracketSize').value = T.bracketSize;
     renderTeamList();
+    renderPoolCard();
   }
 }
 
