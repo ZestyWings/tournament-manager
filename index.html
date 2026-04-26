@@ -82,6 +82,13 @@ input::placeholder{color:#334155}
 .standings-tbl td{padding:9px 10px;border-bottom:1px solid #0d1b2a}
 .standings-tbl tr:last-child td{border-bottom:none}
 .standings-tbl tr:hover td{background:#0f1e2f}
+.standings-row{cursor:pointer}
+.standings-row.active td{background:#111f2a}
+.result-toggle{width:24px;text-align:center;color:#94a3b8}
+.results-row{display:none}
+.results-row.show{display:table-row}
+.results-row td{padding:0}
+.results-box{padding:10px 12px;background:#0b1720;border:1px solid #1e293b;border-radius:8px;margin:8px 0}
 .rk{width:24px;height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-weight:800;font-size:0.72rem}
 .rk.g{background:#f59e0b;color:#0d1b2a}
 .rk.s{background:#94a3b8;color:#0d1b2a}
@@ -121,8 +128,11 @@ input::placeholder{color:#334155}
 .b-team.winner{background:#042f1e;border-left:3px solid #10b981}
 .b-team.loser{opacity:.45}
 .b-team.tbd{color:#334155;font-style:italic}
+.b-team.bye{background:#0d1720;color:#94a3b8}
+.b-team.bye .tn{font-weight:700}
 .b-team .tn{flex:1;font-size:0.83rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .b-team .ts{font-weight:800;color:#f59e0b;min-width:22px;text-align:right;font-size:0.9rem}
+.seed-tag{margin-left:8px;color:#94a3b8;font-size:0.72rem;font-weight:700}
 .b-entry{padding:8px 10px;background:#0a1520;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .b-entry .score-inp{width:52px;background:#1e3348;border-color:#3a5068;color:#ffffff;font-size:1rem}
 .b-entry .score-inp:focus{border-color:#f59e0b;background:#263f5a}
@@ -341,15 +351,13 @@ hr.div{border:none;border-top:1px solid #1e3348;margin:16px 0}
         </select>
       </div>
       <div class="fg" style="max-width:220px">
-        <label>Playoff Bracket Size</label>
-        <select id="bracketSize" onchange="onBracketSizeChange()">
-          <option value="auto">Auto (all teams)</option>
-          <option value="2">2 Teams</option>
-          <option value="4">4 Teams</option>
-          <option value="8">8 Teams</option>
-          <option value="16">16 Teams</option>
-          <option value="32">32 Teams</option>
-        </select>
+        <label>Playoff qualifiers</label>
+        <input type="number" id="bracketSize" min="2" placeholder="Blank = all teams" onchange="onBracketSizeChange()">
+        <div style="font-size:0.72rem;color:#64748b;margin-top:4px">Leave empty for all teams, or enter the number of teams that qualify for playoffs.</div>
+      </div>
+      <div class="fg" style="max-width:180px">
+        <label>Games per team</label>
+        <input type="number" id="gamesPerTeam" min="1" placeholder="Full round robin" onchange="onGamesPerTeamChange()">
       </div>
       <button class="btn btn-secondary btn-sm" onclick="autoAssign()">Auto-Assign Teams</button>
     </div>
@@ -400,7 +408,10 @@ let T = {
   pools: [],        // [{id,teams:[],games:[{id,teamI,teamII,scoreI,scoreII}]}]
   bracket: null,
   bracketSize: 'auto',  // 'auto' | number
+  gamesPerTeam: null,   // null = full round robin
   activePool: 0,
+  activeResultPool: null,
+  activeResultTeam: null,
   phase: 'setup'    // 'setup'|'pool'|'bracket'
 };
 
@@ -621,9 +632,16 @@ function startTournament() {
   T.date = document.getElementById('tDate').value;
   T.org  = document.getElementById('tOrg').value.trim();
 
+  const bracketRaw = document.getElementById('bracketSize').value;
+  const bracketNum = +bracketRaw;
+  T.bracketSize = bracketRaw && !isNaN(bracketNum) && bracketNum >= 2 ? bracketNum : 'auto';
+
+  const gp = +document.getElementById('gamesPerTeam').value;
+  T.gamesPerTeam = gp > 0 ? gp : null;
+
   // Generate round-robin games per pool
   T.pools.forEach(pool=>{
-    pool.games = genRoundRobin(pool.teams);
+    pool.games = genRoundRobin(pool.teams, T.gamesPerTeam);
   });
 
   T.phase = 'pool';
@@ -634,24 +652,32 @@ function startTournament() {
   save();
 }
 
-function genRoundRobin(teamIds) {
-  // Circle/rotation algorithm — groups games into rounds where each team plays once per round
+function genRoundRobin(teamIds, maxGamesPerTeam = null) {
+  // Circle/rotation algorithm — groups games into rounds where each team plays once per round.
+  // If gamesPerTeam is set, only the first rounds are used to limit the schedule.
   const teams = [...teamIds];
   const odd = teams.length % 2 !== 0;
   if (odd) teams.push(null); // null = bye slot
   const N = teams.length;
-  const games = [];
+  const roundsCount = N - 1;
+  const rounds = [];
 
-  for (let r = 0; r < N - 1; r++) {
+  for (let r = 0; r < roundsCount; r++) {
+    const roundGames = [];
     for (let i = 0; i < N / 2; i++) {
       const t1 = teams[i], t2 = teams[N - 1 - i];
       if (t1 !== null && t2 !== null)
-        games.push({id:'g'+(++_gid), teamI:t1, teamII:t2, scoreI:null, scoreII:null, round:r+1});
+        roundGames.push({id:'g'+(++_gid), teamI:t1, teamII:t2, scoreI:null, scoreII:null, round:r+1});
     }
-    // Rotate: keep index 0 fixed, rotate rest clockwise
+    rounds.push(roundGames);
     teams.splice(1, 0, teams.pop());
   }
-  return games;
+
+  const roundsToUse = maxGamesPerTeam && maxGamesPerTeam > 0
+    ? Math.min(maxGamesPerTeam, roundsCount)
+    : roundsCount;
+
+  return rounds.slice(0, roundsToUse).flat();
 }
 
 function updateHeader() {
@@ -694,11 +720,7 @@ function renderPoolContent() {
       <div>
         <div class="card">
           <div class="card-title">📊 Standings — Pool ${pool.id}</div>
-          ${renderStandings(standings)}
-        </div>
-        <div class="card">
-          <div class="card-title">📋 Game Results — Pool ${pool.id}</div>
-          ${renderResults(pool, standings)}
+          ${renderStandingsWithResults(pool, standings)}
         </div>
       </div>
       <div>
@@ -712,6 +734,16 @@ function renderPoolContent() {
       </div>
     </div>
   `;
+}
+function toggleTeamResults(poolId, teamId) {
+  if (T.activeResultPool === poolId && T.activeResultTeam === teamId) {
+    T.activeResultPool = null;
+    T.activeResultTeam = null;
+  } else {
+    T.activeResultPool = poolId;
+    T.activeResultTeam = teamId;
+  }
+  renderPoolContent();
 }
 
 function renderAdvanceBtn() {
@@ -745,22 +777,50 @@ function rkBadge(r){
   return `<span class="rk ${cls[r]||'o'}">${lbl[r]||r+1}</span>`;
 }
 
-function renderStandings(standings) {
+function renderStandingsWithResults(pool, standings) {
   if (!standings.length) return '<div class="empty"><p>No teams in pool.</p></div>';
   return `<table class="standings-tbl">
-    <thead><tr><th>Rank</th><th>Team</th><th>W</th><th>L</th><th>Pts+</th><th>Pts-</th><th>Diff</th></tr></thead>
-    <tbody>${standings.map((s,i)=>`
-      <tr>
+    <thead><tr><th>Rank</th><th>Team</th><th>W</th><th>L</th><th>Pts+</th><th>Pts-</th><th>Diff</th><th></th></tr></thead>
+    <tbody>${standings.map((s,i)=>{
+      const team = getTeam(s.id);
+      const active = T.activeResultPool === pool.id && T.activeResultTeam === s.id;
+      const arrow = active ? '▾' : '▸';
+      return `
+      <tr class="standings-row ${active ? 'active' : ''}" onclick="toggleTeamResults('${pool.id}','${s.id}')">
         <td>${rkBadge(i)}</td>
-        <td style="font-weight:600">${esc(dn(getTeam(s.id)))}</td>
+        <td style="font-weight:600">${esc(dn(team))}</td>
         <td class="w">${s.w}</td>
         <td class="l">${s.l}</td>
         <td>${s.pf}</td>
         <td>${s.pa}</td>
         <td class="${s.diff>0?'pos':s.diff<0?'neg':'neu'}">${s.diff>0?'+':''}${s.diff}</td>
-      </tr>`).join('')}
+        <td class="result-toggle">${arrow}</td>
+      </tr>
+      <tr class="results-row ${active ? 'show' : ''}" id="results-${pool.id}-${s.id}">
+        <td colspan="8"><div class="results-box">${renderResultsForTeam(pool, s.id)}</div></td>
+      </tr>`;
+    }).join('')}
     </tbody>
   </table>`;
+}
+
+function renderResultsForTeam(pool, teamId) {
+  const games = pool.games.filter(g=>g.teamI===teamId||g.teamII===teamId);
+  if (!games.length) return '<div class="empty"><p>No games for this team yet.</p></div>';
+  return `<div class="results-list">${games.map(g=>{
+    const iAmI = g.teamI===teamId;
+    const opp = getTeam(iAmI?g.teamII:g.teamI);
+    const mySc = iAmI?g.scoreI:g.scoreII;
+    const oppSc = iAmI?g.scoreII:g.scoreI;
+    const done = mySc!==null && oppSc!==null;
+    const won = done && +mySc > +oppSc;
+    const diff = done ? +mySc - +oppSc : 0;
+    const diffCls = done ? (diff>0 ? 'pos' : diff<0 ? 'neg' : 'neu') : 'neu';
+    return `<div class="result-row">
+      <div class="opp">vs. ${esc(dn(opp))}</div>
+      ${done ? `<div class="scores"><strong style="font-size:0.95rem">${mySc} – ${oppSc}</strong><span class="${won?'win-badge':'loss-badge'}">${won?'WIN':'LOSS'}</span><span class="${diffCls}" style="font-size:0.78rem">${diff>0?'+':''}${diff}</span></div>` : `<div style="color:#334155;font-size:0.78rem">Not played</div>`}
+    </div>`;
+  }).join('')}</div>`;
 }
 
 // ── Schedule ──
@@ -1108,8 +1168,19 @@ function goToPlayoffs() {
 // ── Bracket seeding ──
 // Seed order: 1st from each pool, 2nd from each pool, etc.
 function onBracketSizeChange() {
-  const v = document.getElementById('bracketSize').value;
-  T.bracketSize = v === 'auto' ? 'auto' : +v;
+  const raw = document.getElementById('bracketSize').value;
+  const parsed = +raw;
+  if (!raw || isNaN(parsed) || parsed < 2) {
+    T.bracketSize = 'auto';
+  } else {
+    T.bracketSize = parsed;
+  }
+  save();
+}
+
+function onGamesPerTeamChange() {
+  const v = +document.getElementById('gamesPerTeam').value;
+  T.gamesPerTeam = v > 0 ? v : null;
   save();
 }
 
@@ -1200,13 +1271,8 @@ function propagate(rounds) {
       else rounds[r+1][ni].teamII=m.winner;
     });
   }
-  // auto-advance byes in subsequent rounds
-  for (let r=1;r<rounds.length;r++) {
-    rounds[r].forEach(m=>{
-      if (m.teamI&&!m.teamII) m.winner=m.teamI;
-      if (!m.teamI&&m.teamII) m.winner=m.teamII;
-    });
-  }
+  // Do not auto-advance matches in later rounds just because one team is not yet assigned.
+  // That would prematurely mark quarterfinals as complete when the remaining opponent is still pending.
 }
 
 function nextPow2(n){ let p=1; while(p<n) p*=2; return p; }
@@ -1235,6 +1301,7 @@ function renderBracket() {
 
   html += `<div class="phase-banner"><div><h3>Playoff Bracket</h3>
     <p>${b.seeded.length} teams • ${b.rounds.length} round${b.rounds.length!==1?'s':''}</p>
+    <p style="color:#94a3b8;font-size:0.82rem;margin-top:6px">Only matchups with two assigned teams accept scores; byes auto-advance top seeds.</p>
   </div></div>`;
 
   html += '<div class="bracket-wrap"><div class="bracket">';
@@ -1352,33 +1419,54 @@ function makeBlurb(s, rank, allStandings, seed, pool) {
   return `${name} ${recordLine} — the ${rankDesc} performer in Pool ${pool.id} — with a ${diffLine}${seedLine}.`;
 }
 
+function renderBracketTeam(team, score, done, extraClass = '') {
+  if (!team) {
+    return `<div class="b-team tbd"><span class="tn">TBD</span></div>`;
+  }
+  const seedLabel = team.seed ? `<span class="seed-tag">#${team.seed}</span>` : '';
+  const scoreValue = done ? `<span class="ts">${score ?? ''}</span>` : '';
+  return `<div class="b-team ${extraClass}">
+    <span class="tn">${esc(team.name)}</span>
+    ${scoreValue}${seedLabel}
+  </div>`;
+}
+
 function renderMatchup(m, ri) {
-  const tI=m.teamI, tII=m.teamII;
-  const done=!!m.winner;
-  const canScore = tI&&tII&&!done;
+  const tI = m.teamI, tII = m.teamII;
+  const done = !!m.winner;
+  const canScore = tI && tII && !done;
 
-  let html = `<div class="b-matchup">`;
-  // Team I
-  const iWin = done&&m.winner?.id===tI?.id;
-  const iLoss= done&&m.winner?.id!==tI?.id;
-  html += `<div class="b-team ${iWin?'winner':iLoss?'loser':!tI?'tbd':''}">
-    <span class="tn">${tI?esc(tI.name):'TBD'}</span>
-    ${done&&tI?`<span class="ts">${m.scoreI??''}</span>`:tI&&!done&&tI.seed?`<span style="color:#334155;font-size:0.72rem">#${tI.seed}</span>`:''}
-  </div>`;
-  // Team II
-  const iiWin= done&&m.winner?.id===tII?.id;
-  const iiLoss=done&&m.winner?.id!==tII?.id;
-  html += `<div class="b-team ${iiWin?'winner':iiLoss?'loser':!tII?'tbd':''}">
-    <span class="tn">${tII?esc(tII.name):'TBD'}</span>
-    ${done&&tII?`<span class="ts">${m.scoreII??''}</span>`:tII&&!done&&tII.seed?`<span style="color:#334155;font-size:0.72rem">#${tII.seed}</span>`:''}
-  </div>`;
+  if (!tI && !tII) return '';
 
-  // Score entry
+  const hasBye = ri === 0 && ((tI && !tII) || (!tI && tII));
+  const htmlClass = hasBye ? 'b-matchup bye' : 'b-matchup';
+  let html = `<div class="${htmlClass}">`;
+
+  if (tI) {
+    const iWin = done && m.winner?.id === tI.id;
+    const iLoss = done && m.winner?.id !== tI.id;
+    html += renderBracketTeam(tI, m.scoreI, done, iWin ? 'winner' : iLoss ? 'loser' : '');
+  } else if (hasBye) {
+    html += `<div class="b-team bye"><span class="tn">BYE</span></div>`;
+  } else {
+    html += `<div class="b-team tbd"><span class="tn">TBD</span></div>`;
+  }
+
+  if (tII) {
+    const iiWin = done && m.winner?.id === tII.id;
+    const iiLoss = done && m.winner?.id !== tII.id;
+    html += renderBracketTeam(tII, m.scoreII, done, iiWin ? 'winner' : iiLoss ? 'loser' : '');
+  } else if (hasBye) {
+    html += `<div class="b-team bye"><span class="tn">BYE</span></div>`;
+  } else {
+    html += `<div class="b-team tbd"><span class="tn">TBD</span></div>`;
+  }
+
   if (canScore) {
     html += `<div class="b-entry">
-      <input type="number" class="score-inp" placeholder="0" id="bs-${m.id}-I" min="0" max="99" value="${m.scoreI??''}">
+      <input type="number" class="score-inp" placeholder="0" id="bs-${m.id}-I" min="0" max="99" value="${m.scoreI ?? ''}">
       <span style="color:#334155;font-size:0.78rem">vs</span>
-      <input type="number" class="score-inp" placeholder="0" id="bs-${m.id}-II" min="0" max="99" value="${m.scoreII??''}">
+      <input type="number" class="score-inp" placeholder="0" id="bs-${m.id}-II" min="0" max="99" value="${m.scoreII ?? ''}">
       <button class="btn btn-success btn-xs" onclick="submitBracketScore('${m.id}')">✓ Record</button>
     </div>`;
   }
@@ -1492,7 +1580,8 @@ function init() {
     document.getElementById('tDate').value = T.date||'';
     document.getElementById('tOrg').value  = T.org||'';
     if (T.pools.length) document.getElementById('numPools').value = T.pools.length;
-    if (T.bracketSize) document.getElementById('bracketSize').value = T.bracketSize;
+    document.getElementById('bracketSize').value = T.bracketSize && T.bracketSize !== 'auto' ? T.bracketSize : '';
+    document.getElementById('gamesPerTeam').value = T.gamesPerTeam || '';
 
     updateHeader();
 
@@ -1513,7 +1602,8 @@ function init() {
     document.getElementById('tDate').value = T.date || new Date().toISOString().slice(0,10);
     document.getElementById('tOrg').value  = T.org||'';
     if (T.pools.length) document.getElementById('numPools').value = T.pools.length;
-    if (T.bracketSize) document.getElementById('bracketSize').value = T.bracketSize;
+    document.getElementById('bracketSize').value = T.bracketSize && T.bracketSize !== 'auto' ? T.bracketSize : '';
+    document.getElementById('gamesPerTeam').value = T.gamesPerTeam || '';
     renderTeamList();
     renderPoolCard();
   }
